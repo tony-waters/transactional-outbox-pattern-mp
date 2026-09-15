@@ -11,7 +11,7 @@ already-running stack.
 ## Prerequisites
 
 - [k6](https://k6.io/docs/get-started/installation/) installed locally.
-- The full stack up and healthy: `docker-compose up` from the repo root, with the Debezium
+- The full stack up and healthy: `docker compose up` from the repo root, with the Debezium
   connector registered (the `connector-registrar` one-shot container handles this automatically
   — see #4).
 
@@ -32,7 +32,7 @@ sent (no drops), and delivery was actually throttled rather than instantaneous.
 `emails.sent` is a single stack-wide counter, so the verify stage's target (`baseline + ORDER_COUNT`)
 can only be trusted if nothing else is still feeding it emails from an earlier invocation. Run
 this against a freshly-started stack, and if a previous run of the script timed out or was
-interrupted partway through, do a full reset — `docker-compose down -v && docker-compose up -d`
+interrupted partway through, do a full reset — `docker compose down -v && docker compose up -d`
 — before running it again. The `-v` matters: `postgres`'s data volume (unlike `kafka`'s, which
 is ephemeral) survives a plain `down`/`up`, so old `outbox` rows are still there when the
 connector re-registers with no prior offset — Debezium's default initial-snapshot mode then
