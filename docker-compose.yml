@@ -106,5 +106,17 @@ services:
       postgres:
         condition: service_healthy
 
+  email-service:
+    build:
+      context: ./email-service
+      network: host
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "8082:8082"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
 volumes:
   postgres-data:
