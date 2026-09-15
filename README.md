@@ -87,6 +87,151 @@ and asserts the pattern — including the rate limiter's throttling — actually
 manually against an already-running stack, not as part of `docker-compose`. See
 [`k6/README.md`](k6/README.md).
 
+## Running on Kind (production-like HA topology)
+
+Docker Compose above is the default, single-instance quick-start. This repo also runs on a
+local Kind cluster with a production-like, highly-available topology: a Strimzi-managed
+3-broker Kafka cluster (replication factor 3), 2 replicas each of `rest-service` and
+`email-service` spread across nodes with anti-affinity and `PodDisruptionBudget`s, a
+single-instance Postgres `StatefulSet`, and Debezium running via Strimzi's
+`KafkaConnect`/`KafkaConnector` custom resources instead of compose's one-shot
+`connector-registrar` job. See [ADR 0003](docs/adr/0003-strimzi-for-kafka-on-kind.md) and
+[ADR 0004](docs/adr/0004-ha-topology-before-resilience-tests.md) for why it's shaped this way,
+and [`k8s/`](k8s/) for the manifests.
+
+Prerequisites: [`kind`](https://kind.sigs.k8s.io/), `kubectl`, `docker`.
+
+### 1. Create the cluster
+
+```sh
+kind create cluster --name outbox --config kind-config.yaml
+```
+
+This gives you 1 control-plane + 3 worker nodes, so each of the 3 Kafka brokers can land on a
+distinct worker.
+
+### 2. Install the Strimzi operator
+
+```sh
+kubectl create namespace kafka
+curl -sL https://github.com/strimzi/strimzi-kafka-operator/releases/download/1.2.0/strimzi-cluster-operator-1.2.0.yaml \
+  | sed 's/namespace: .*/namespace: kafka/' \
+  | kubectl apply -f - -n kafka
+kubectl wait --for=condition=Available deployment/strimzi-cluster-operator -n kafka --timeout=180s
+```
+
+### 3. Build and load the images
+
+Kind nodes run their own containerd — images built or pulled on the host aren't visible there
+until you load them in. Besides `rest-service`/`email-service`, this also builds a custom Kafka
+Connect image: Strimzi's stock Connect image ships with no connector plugins, so
+[`connect/Dockerfile.strimzi`](connect/Dockerfile.strimzi) adds the Debezium Postgres connector
+(copied out of the `debezium/connect` image compose already uses) on top of Strimzi's own Kafka
+image.
+
+```sh
+docker build --network host -t local/rest-service:latest ./rest-service
+docker build --network host -t local/email-service:latest ./email-service
+docker build -f connect/Dockerfile.strimzi -t local/strimzi-connect-debezium:1.2.0 connect/
+
+docker pull quay.io/strimzi/operator:1.2.0
+docker pull quay.io/strimzi/kafka:1.2.0-kafka-4.3.1
+docker pull postgres:16
+docker pull provectuslabs/kafka-ui:v0.7.2
+
+kind load docker-image --name outbox \
+  local/rest-service:latest \
+  local/email-service:latest \
+  local/strimzi-connect-debezium:1.2.0 \
+  quay.io/strimzi/operator:1.2.0 \
+  quay.io/strimzi/kafka:1.2.0-kafka-4.3.1 \
+  postgres:16 \
+  provectuslabs/kafka-ui:v0.7.2
+```
+
+> **If `kind load docker-image` fails with `content digest ... not found`:** this is a known
+> interaction between `kind load`'s `ctr images import --all-platforms` and Docker's
+> containerd-backed image store — the image's manifest list references platforms whose blobs
+> were never actually pulled locally. Work around it per-image by importing without
+> `--all-platforms`:
+> ```sh
+> docker save <image> -o /tmp/image.tar
+> for node in outbox-control-plane outbox-worker outbox-worker2 outbox-worker3; do
+>   docker cp /tmp/image.tar "$node":/image.tar
+>   docker exec "$node" ctr --namespace=k8s.io images import /image.tar
+>   docker exec "$node" rm -f /image.tar
+> done
+> ```
+
+### 4. Apply the manifests and wait for everything to come up
+
+```sh
+kubectl apply -f k8s/
+kubectl wait kafka/outbox -n kafka --for=condition=Ready --timeout=300s
+kubectl wait kafkaconnect/outbox-connect -n kafka --for=condition=Ready --timeout=180s
+kubectl rollout status deployment/rest-service -n kafka
+kubectl rollout status deployment/email-service -n kafka
+kubectl get kafkaconnector -n kafka   # READY should be True
+```
+
+### 5. Reach the services from the host
+
+Kind's nodes are docker containers on the `kind` bridge network and are directly reachable from
+the host by IP — no `kubectl port-forward` needed:
+
+```sh
+NODE_IP=$(docker inspect outbox-worker --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+curl -i -X POST http://$NODE_IP:30081/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"customerEmail": "you@example.com", "amount": 19.99}'
+```
+
+| Service | NodePort |
+| --- | --- |
+| `rest-service` | `30081` |
+| `email-service` | `30082` |
+| `kafka-ui` | `30080` |
+| `postgres` | `30432` |
+
+Any node's IP (`docker inspect outbox-<control-plane\|worker\|worker2\|worker3> --format
+'{{.NetworkSettings.Networks.kind.IPAddress}}'`, or `kubectl get nodes -o wide`) answers every
+NodePort above — except `email-service`'s, which needs the right node (see below).
+
+`email-service`'s `/actuator/metrics/emails.sent` is an in-process counter, not aggregated
+across its 2 replicas: `outbox.event.order` has a single partition, so only one replica is ever
+the active Kafka consumer, and the other's counter stays at zero forever. Its Service uses
+`externalTrafficPolicy: Local` so a given node's NodePort only ever answers from that node's own
+pod (no cross-node load-balancing to mask this), rather than silently flip-flopping between a
+real count and a stuck zero. Find the active replica's node before polling the metric or running
+the k6 test below:
+
+```sh
+kubectl exec -n kafka outbox-dual-role-0 -c kafka -- \
+  bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group email-service
+kubectl get pods -n kafka -o wide -l app=email-service   # match the consumer's HOST (pod IP) to a node
+```
+
+### 6. Run the existing k6 end-to-end test against Kind
+
+Point the same script from [`k6/`](k6/) at the NodePort addresses instead of compose's
+`localhost` ports — no changes to the script itself:
+
+```sh
+k6 run \
+  -e REST_SERVICE_URL=http://<any-node-ip>:30081 \
+  -e EMAIL_SERVICE_URL=http://<active-email-service-node-ip>:30082 \
+  k6/outbox-load-test.js
+```
+
+A passing run means the same thing it does on compose: every order created, every confirmation
+eventually sent with no drops, and delivery visibly throttled.
+
+### Cleanup
+
+```sh
+kind delete cluster --name outbox
+```
+
 ## Notes
 
 - This is a prototype, not a production-ready service: no auth, no outbox cleanup,
