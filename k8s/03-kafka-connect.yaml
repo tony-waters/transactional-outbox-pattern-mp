@@ -21,6 +21,49 @@ spec:
     config.storage.replication.factor: 3
     offset.storage.replication.factor: 3
     status.storage.replication.factor: 3
+    # Lets connector configs pull values out of env vars (populated below from the Secret)
+    # instead of hardcoding them, so the Postgres credential has one source of truth.
+    config.providers: env
+    config.providers.env.class: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+  template:
+    connectContainer:
+      env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+---
+# Strimzi's auto-generated NetworkPolicy on the Connect pod only admits ingress from Connect's
+# own pods and the cluster operator (port 8083), which blocks kafka-ui's connector-status calls.
+# NetworkPolicies selecting the same pod are additive, so this only adds an allowance rather
+# than replacing Strimzi's managed policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-ui-to-connect
+  namespace: kafka
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/cluster: outbox-connect
+      strimzi.io/kind: KafkaConnect
+      strimzi.io/name: outbox-connect-connect
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kafka-ui
+      ports:
+        - port: 8083
+          protocol: TCP
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnector
@@ -35,8 +78,8 @@ spec:
   config:
     database.hostname: postgres
     database.port: "5432"
-    database.user: postgres
-    database.password: postgres
+    database.user: "${env:POSTGRES_USER}"
+    database.password: "${env:POSTGRES_PASSWORD}"
     database.dbname: outbox
     topic.prefix: rest-service
     schema.include.list: public

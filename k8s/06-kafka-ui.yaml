@@ -44,29 +44,3 @@ spec:
     - port: 8080
       targetPort: 8080
       nodePort: 30080
----
-# Strimzi's auto-generated NetworkPolicy on the Connect pod only admits ingress from Connect's
-# own pods and the cluster operator (port 8083), which blocks kafka-ui's connector-status calls.
-# NetworkPolicies selecting the same pod are additive, so this only adds an allowance rather
-# than replacing Strimzi's managed policy.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: kafka-ui-to-connect
-  namespace: kafka
-spec:
-  podSelector:
-    matchLabels:
-      strimzi.io/cluster: outbox-connect
-      strimzi.io/kind: KafkaConnect
-      strimzi.io/name: outbox-connect-connect
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: kafka-ui
-      ports:
-        - port: 8083
-          protocol: TCP
