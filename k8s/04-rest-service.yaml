@@ -42,6 +42,8 @@ spec:
                 secretKeyRef:
                   name: postgres-credentials
                   key: POSTGRES_PASSWORD
+            - name: MANAGEMENT_OTLP_TRACING_ENDPOINT
+              value: http://tempo.monitoring.svc:4318/v1/traces
           livenessProbe:
             httpGet:
               path: /actuator/health

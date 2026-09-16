@@ -2,6 +2,7 @@ package com.example.outbox.rest.order;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -17,8 +18,15 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+// Spring Boot disables tracing in tests by default (ObservabilityContextCustomizerFactory);
+// re-enable it here since this test asserts on a real, propagator-produced traceparent. The
+// OTLP exporter is excluded since there's no collector in the test environment — otherwise
+// every run logs an ERROR-level "connection refused" trying to reach localhost:4318.
+@AutoConfigureObservability
 @Testcontainers
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.autoconfigure.exclude=org.springframework.boot.actuate.autoconfigure.tracing.otlp.OtlpAutoConfiguration")
 class OutboxWriteTest {
 
     @Container
@@ -41,7 +49,7 @@ class OutboxWriteTest {
         assertThat(created).isNotNull();
 
         Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT aggregatetype, aggregateid, type, payload FROM outbox WHERE aggregateid = ?",
+                "SELECT aggregatetype, aggregateid, type, payload, trace_context FROM outbox WHERE aggregateid = ?",
                 created.id().toString());
 
         assertThat(row.get("aggregatetype")).isEqualTo("order");
@@ -51,6 +59,10 @@ class OutboxWriteTest {
                 .contains(created.id().toString())
                 .contains("customer@example.com")
                 .contains("19.99");
+        // Full sampling is on (management.tracing.sampling.probability=1.0), so the request's
+        // span must have been captured as a W3C traceparent (see ADR 0005): "00-<32 hex trace
+        // id>-<16 hex span id>-<2 hex flags>".
+        assertThat((String) row.get("trace_context")).matches("00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}");
     }
 
     @Test

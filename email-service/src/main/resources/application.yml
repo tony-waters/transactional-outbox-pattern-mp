@@ -14,9 +14,22 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      # Lets Spring Kafka's Observation instrumentation extract the "traceparent" header
+      # Debezium's EventRouter placed on the record and continue that trace, instead of
+      # starting a new root span per consumed message (see ADR 0005).
+      observation-enabled: true
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+    propagation:
+      type: W3C
+  otlp:
+    tracing:
+      endpoint: http://localhost:4318/v1/traces

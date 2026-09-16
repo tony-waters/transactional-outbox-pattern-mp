@@ -49,6 +49,7 @@ docker pull "quay.io/strimzi/kafka:${STRIMZI_VERSION}-kafka-4.3.1"
 docker pull postgres:16
 docker pull provectuslabs/kafka-ui:v0.7.2
 docker pull grafana/grafana:11.3.1
+docker pull grafana/tempo:2.6.1
 docker pull quay.io/prometheus/prometheus:v3.14.0
 docker pull "quay.io/prometheus-operator/prometheus-operator:${PROMETHEUS_OPERATOR_VERSION}"
 docker pull "quay.io/prometheus-operator/prometheus-config-reloader:${PROMETHEUS_OPERATOR_VERSION}"
@@ -62,6 +63,7 @@ for image in \
   postgres:16 \
   provectuslabs/kafka-ui:v0.7.2 \
   grafana/grafana:11.3.1 \
+  grafana/tempo:2.6.1 \
   quay.io/prometheus/prometheus:v3.14.0 \
   "quay.io/prometheus-operator/prometheus-operator:${PROMETHEUS_OPERATOR_VERSION}" \
   "quay.io/prometheus-operator/prometheus-config-reloader:${PROMETHEUS_OPERATOR_VERSION}"
@@ -93,6 +95,7 @@ kubectl wait kafkaconnect/outbox-connect -n kafka --for=condition=Ready --timeou
 kubectl rollout status deployment/rest-service -n kafka
 kubectl rollout status deployment/email-service -n kafka
 kubectl rollout status deployment/grafana -n monitoring
+kubectl rollout status deployment/tempo -n monitoring
 kubectl get kafkaconnector -n kafka
 
 NODE_IP=$(docker inspect "${CLUSTER_NAME}-worker" --format '{{.NetworkSettings.Networks.kind.IPAddress}}')

@@ -29,14 +29,20 @@ public class OutboxEvent {
     @Column(nullable = false, columnDefinition = "jsonb")
     private String payload;
 
+    // No business meaning — carries the W3C traceparent so Debezium's EventRouter can place
+    // it as a Kafka header and email-service can continue this trace (see ADR 0005).
+    @Column(name = "trace_context")
+    private String traceContext;
+
     protected OutboxEvent() {
     }
 
-    public OutboxEvent(UUID id, String aggregatetype, String aggregateid, String type, String payload) {
+    public OutboxEvent(UUID id, String aggregatetype, String aggregateid, String type, String payload, String traceContext) {
         this.id = id;
         this.aggregatetype = aggregatetype;
         this.aggregateid = aggregateid;
         this.type = type;
         this.payload = payload;
+        this.traceContext = traceContext;
     }
 }

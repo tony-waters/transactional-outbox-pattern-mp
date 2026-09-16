@@ -103,3 +103,7 @@ spec:
     transforms.outbox.table.field.event.payload: payload
     transforms.outbox.route.topic.regex: "(?<routedByValue>.*)"
     transforms.outbox.route.topic.replacement: "outbox.event.${routedByValue}"
+    # Carries the outbox row's trace_context column onto the routed message as a Kafka header
+    # named "traceparent" (W3C format), so email-service can continue rest-service's trace
+    # across the CDC hop instead of starting a new one (see ADR 0005, #17).
+    transforms.outbox.table.fields.additional.placement: "trace_context:header:traceparent"

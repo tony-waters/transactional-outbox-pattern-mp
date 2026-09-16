@@ -156,6 +156,7 @@ docker pull quay.io/strimzi/kafka:1.2.0-kafka-4.3.1
 docker pull postgres:16
 docker pull provectuslabs/kafka-ui:v0.7.2
 docker pull grafana/grafana:11.3.1
+docker pull grafana/tempo:2.6.1
 docker pull quay.io/prometheus/prometheus:v3.14.0
 docker pull quay.io/prometheus-operator/prometheus-operator:v0.94.0
 docker pull quay.io/prometheus-operator/prometheus-config-reloader:v0.94.0
@@ -169,6 +170,7 @@ kind load docker-image --name outbox \
   postgres:16 \
   provectuslabs/kafka-ui:v0.7.2 \
   grafana/grafana:11.3.1 \
+  grafana/tempo:2.6.1 \
   quay.io/prometheus/prometheus:v3.14.0 \
   quay.io/prometheus-operator/prometheus-operator:v0.94.0 \
   quay.io/prometheus-operator/prometheus-config-reloader:v0.94.0
@@ -214,6 +216,7 @@ kubectl wait kafkaconnect/outbox-connect -n kafka --for=condition=Ready --timeou
 kubectl rollout status deployment/rest-service -n kafka
 kubectl rollout status deployment/email-service -n kafka
 kubectl rollout status deployment/grafana -n monitoring
+kubectl rollout status deployment/tempo -n monitoring
 kubectl get kafkaconnector -n kafka   # READY should be True
 ```
 
@@ -291,6 +294,24 @@ Action** is auto-provisioned on first boot, with three panels:
 
 Prometheus's own UI (targets/graph pages, useful for checking scrape health directly) is at
 `http://<any-node-ip>:30390`.
+
+### 9. Distributed tracing: Tempo
+
+[`k8s/monitoring/03-tempo.yaml`](k8s/monitoring/03-tempo.yaml) adds Grafana Tempo (single-binary,
+local disk storage) to the `monitoring` namespace as the trace backend for the one hop metrics
+can't show: the CDC relay between `rest-service` writing the `outbox` row and `email-service`
+consuming the routed Kafka message. `rest-service` and `email-service` both export traces via
+Spring Boot's Micrometer Tracing + OTLP exporter, and Debezium's EventRouter SMT carries the
+trace across the CDC hop by routing the `outbox.trace_context` column onto the Kafka message as a
+`traceparent` header — no custom SMT, no log-correlation hack (see
+[ADR 0005](docs/adr/0005-trace-context-through-outbox.md)).
+
+To view a trace: place an order, then open Grafana ([`http://<any-node-ip>:30300`](#8-metrics-prometheus--grafana)),
+go to **Explore**, pick the **Tempo** datasource, and search by service name (`rest-service` or
+`email-service`) or by trace ID (logged by both services alongside every span). A single trace
+shows the `POST /orders` request span in `rest-service`, then a `receive` span in `email-service`
+for the same trace ID — proof the CDC hop didn't break trace continuity, even though Debezium
+itself never touched an OpenTelemetry SDK.
 
 ### Cleanup
 
