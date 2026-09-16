@@ -138,6 +138,10 @@ docker pull quay.io/strimzi/operator:1.2.0
 docker pull quay.io/strimzi/kafka:1.2.0-kafka-4.3.1
 docker pull postgres:16
 docker pull provectuslabs/kafka-ui:v0.7.2
+docker pull grafana/grafana:11.3.1
+docker pull quay.io/prometheus/prometheus:v3.14.0
+docker pull quay.io/prometheus-operator/prometheus-operator:v0.94.0
+docker pull quay.io/prometheus-operator/prometheus-config-reloader:v0.94.0
 
 kind load docker-image --name outbox \
   local/rest-service:latest \
@@ -146,7 +150,11 @@ kind load docker-image --name outbox \
   quay.io/strimzi/operator:1.2.0 \
   quay.io/strimzi/kafka:1.2.0-kafka-4.3.1 \
   postgres:16 \
-  provectuslabs/kafka-ui:v0.7.2
+  provectuslabs/kafka-ui:v0.7.2 \
+  grafana/grafana:11.3.1 \
+  quay.io/prometheus/prometheus:v3.14.0 \
+  quay.io/prometheus-operator/prometheus-operator:v0.94.0 \
+  quay.io/prometheus-operator/prometheus-config-reloader:v0.94.0
 ```
 
 > **If `kind load docker-image` fails with `content digest ... not found`:** this is a known
@@ -163,18 +171,36 @@ kind load docker-image --name outbox \
 > done
 > ```
 
-### 4. Apply the manifests and wait for everything to come up
+### 4. Install the Prometheus Operator
+
+Prometheus/Grafana ([step 8](#8-metrics-prometheus--grafana)) are managed via the `Prometheus`/
+`PodMonitor` custom resources, which need the Prometheus Operator's CRDs and controller
+installed first — same "curl a manifest, apply it" pattern as the Strimzi operator above.
+`--server-side` is required: the bundle's CRDs exceed `kubectl apply`'s client-side annotation
+size limit.
+
+```sh
+kubectl create namespace monitoring
+curl -sL "https://github.com/prometheus-operator/prometheus-operator/releases/download/v0.94.0/bundle.yaml" \
+  | sed 's/namespace: default/namespace: monitoring/' \
+  | kubectl apply --server-side -f -
+kubectl wait --for=condition=Available deployment/prometheus-operator -n monitoring --timeout=180s
+```
+
+### 5. Apply the manifests and wait for everything to come up
 
 ```sh
 kubectl apply -f k8s/
+kubectl apply -f k8s/monitoring/
 kubectl wait kafka/outbox -n kafka --for=condition=Ready --timeout=300s
 kubectl wait kafkaconnect/outbox-connect -n kafka --for=condition=Ready --timeout=180s
 kubectl rollout status deployment/rest-service -n kafka
 kubectl rollout status deployment/email-service -n kafka
+kubectl rollout status deployment/grafana -n monitoring
 kubectl get kafkaconnector -n kafka   # READY should be True
 ```
 
-### 5. Reach the services from the host
+### 6. Reach the services from the host
 
 Kind's nodes are docker containers on the `kind` bridge network and are directly reachable from
 the host by IP — no `kubectl port-forward` needed:
@@ -192,6 +218,8 @@ curl -i -X POST http://$NODE_IP:30081/orders \
 | `email-service` | `30082` |
 | `kafka-ui` | `30080` |
 | `postgres` | `30432` |
+| `grafana` | `30300` |
+| `prometheus` | `30390` |
 
 Any node's IP (`docker inspect outbox-<control-plane\|worker\|worker2\|worker3> --format
 '{{.NetworkSettings.Networks.kind.IPAddress}}'`, or `kubectl get nodes -o wide`) answers every
@@ -211,7 +239,7 @@ kubectl exec -n kafka outbox-dual-role-0 -c kafka -- \
 kubectl get pods -n kafka -o wide -l app=email-service   # match the consumer's HOST (pod IP) to a node
 ```
 
-### 6. Run the existing k6 end-to-end test against Kind
+### 7. Run the existing k6 end-to-end test against Kind
 
 Point the same script from [`k6/`](k6/) at the NodePort addresses instead of compose's
 `localhost` ports — no changes to the script itself:
@@ -225,6 +253,27 @@ k6 run \
 
 A passing run means the same thing it does on compose: every order created, every confirmation
 eventually sent with no drops, and delivery visibly throttled.
+
+### 8. Metrics: Prometheus + Grafana
+
+[`k8s/monitoring/`](k8s/monitoring/) adds a Prometheus + Grafana stack, in its own `monitoring`
+namespace, that makes the HA topology's actual behavior visible instead of just "up/down": Kafka
+broker/Connect/consumer-lag metrics via Strimzi's built-in `strimziMetricsReporter` and
+`kafkaExporter` (see `k8s/02-kafka.yaml`, `k8s/03-kafka-connect.yaml`), and `rest-service`/
+`email-service` metrics via Micrometer's `/actuator/prometheus`.
+
+Open Grafana at `http://<any-node-ip>:30300` — no login required (anonymous Admin access, this
+being a prototype with no auth anywhere else either). A dashboard called **Outbox Pattern in
+Action** is auto-provisioned on first boot, with three panels:
+
+- **Orders created vs. confirmation emails sent** — the rate limiter's throttling curve: place
+  orders faster than 5/10s (e.g. via the k6 script above) and watch the two lines diverge.
+- **`outbox.event.order` consumer lag** — climbs under load, drains once the rate limiter catches
+  up.
+- **Kafka partition leadership by broker** — which of the 3 brokers is leading which partitions.
+
+Prometheus's own UI (targets/graph pages, useful for checking scrape health directly) is at
+`http://<any-node-ip>:30390`.
 
 ### Cleanup
 

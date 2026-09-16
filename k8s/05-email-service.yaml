@@ -27,7 +27,8 @@ spec:
           image: local/email-service:latest
           imagePullPolicy: Never
           ports:
-            - containerPort: 8082
+            - name: http
+              containerPort: 8082
           env:
             - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
               value: outbox-kafka-bootstrap:9092

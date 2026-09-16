@@ -27,7 +27,8 @@ spec:
           image: local/rest-service:latest
           imagePullPolicy: Never
           ports:
-            - containerPort: 8081
+            - name: http
+              containerPort: 8081
           env:
             - name: SPRING_DATASOURCE_URL
               value: jdbc:postgresql://postgres:5432/outbox

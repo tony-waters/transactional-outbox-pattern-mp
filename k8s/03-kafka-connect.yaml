@@ -17,6 +17,10 @@ spec:
   configStorageTopic: connect-configs
   offsetStorageTopic: connect-offsets
   statusStorageTopic: connect-statuses
+  # Exposes Connect metrics on the tcp-prometheus port (9404), opened to all namespaces by
+  # default by Strimzi — same as the Kafka brokers (see #16).
+  metricsConfig:
+    type: strimziMetricsReporter
   config:
     config.storage.replication.factor: 3
     offset.storage.replication.factor: 3
