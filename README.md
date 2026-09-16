@@ -101,6 +101,23 @@ and [`k8s/`](k8s/) for the manifests.
 
 Prerequisites: [`kind`](https://kind.sigs.k8s.io/), `kubectl`, `docker`.
 
+### Quick start
+
+```sh
+./up.sh
+```
+
+Runs every step below in order — cluster, operators, images, manifests, readiness waits — and
+is safe to re-run (it skips creating the cluster if `outbox` already exists). Tear it all down,
+data included, with:
+
+```sh
+./down.sh
+```
+
+The steps below are what `up.sh` runs; read on if you want to run them by hand or you're
+troubleshooting a step that failed.
+
 ### 1. Create the cluster
 
 ```sh
@@ -278,8 +295,10 @@ Prometheus's own UI (targets/graph pages, useful for checking scrape health dire
 ### Cleanup
 
 ```sh
-kind delete cluster --name outbox
+./down.sh
 ```
+
+Equivalent to `kind delete cluster --name outbox` directly.
 
 ## Notes
 
