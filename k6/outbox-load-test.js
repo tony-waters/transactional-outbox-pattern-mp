@@ -16,6 +16,14 @@ import { check, sleep, fail } from 'k6';
 const REST_SERVICE_URL = __ENV.REST_SERVICE_URL || 'http://localhost:8081';
 const EMAIL_SERVICE_URL = __ENV.EMAIL_SERVICE_URL || 'http://localhost:8082';
 
+// On Kind, email-service runs 2 replicas behind a single-partition topic, so only one
+// replica's JVM ever holds a non-zero emails.sent counter (see k8s/05-email-service.yaml and
+// README.md's "Running on Kind" section). Polling EMAIL_SERVICE_URL directly only sees whichever
+// pod answers, which is fine against compose's single instance but flakes against Kind's two.
+// Set PROMETHEUS_URL (e.g. the `prometheus-nodeport` Service, :30390 on Kind) to instead sum the
+// counter across every replica via PromQL, which is correct regardless of which pod is consuming.
+const PROMETHEUS_URL = __ENV.PROMETHEUS_URL || '';
+
 const ORDER_COUNT = Number(__ENV.ORDER_COUNT || 20);
 const LOAD_DURATION_SECONDS = Number(__ENV.LOAD_DURATION_SECONDS || 10);
 
@@ -53,7 +61,28 @@ export const options = {
   },
 };
 
-function emailsSentCount() {
+// Sums emails.sent (exposed to Prometheus as emails_sent_total by Micrometer's naming
+// convention) across every email-service replica, so it doesn't matter which pod(s) are
+// actually consuming.
+function emailsSentCountFromPrometheus() {
+  const url = `${PROMETHEUS_URL}/api/v1/query?query=${encodeURIComponent('sum(emails_sent_total)')}`;
+  const res = http.get(url);
+  if (res.status !== 200) {
+    fail(`unexpected status ${res.status} polling ${url}: ${res.body}`);
+  }
+  const body = res.json();
+  if (body.status !== 'success') {
+    fail(`Prometheus query failed: ${res.body}`);
+  }
+  const result = body.data.result;
+  if (result.length === 0) {
+    // Defensive: treat a not-yet-registered counter as zero rather than failing the poll.
+    return 0;
+  }
+  return Number(result[0].value[1]);
+}
+
+function emailsSentCountFromActuator() {
   const res = http.get(`${EMAIL_SERVICE_URL}/actuator/metrics/emails.sent`);
   if (res.status === 404) {
     // Defensive: treat a not-yet-registered counter as zero rather than failing the poll.
@@ -65,6 +94,10 @@ function emailsSentCount() {
   const body = res.json();
   const measurement = body.measurements.find((m) => m.statistic === 'COUNT');
   return measurement.value;
+}
+
+function emailsSentCount() {
+  return PROMETHEUS_URL ? emailsSentCountFromPrometheus() : emailsSentCountFromActuator();
 }
 
 function postOrder(index) {
@@ -103,10 +136,10 @@ export default function () {
   console.log(`Load stage complete: ${ORDER_COUNT} orders created, all 201.`);
 
   const target = baseline + ORDER_COUNT;
-  console.log(
-    `Verify stage: polling ${EMAIL_SERVICE_URL}/actuator/metrics/emails.sent for it to reach ${target} ` +
-      `(baseline was ${baseline})`,
-  );
+  const source = PROMETHEUS_URL
+    ? `${PROMETHEUS_URL} (sum(emails_sent_total) across replicas)`
+    : `${EMAIL_SERVICE_URL}/actuator/metrics/emails.sent`;
+  console.log(`Verify stage: polling ${source} for emails.sent to reach ${target} (baseline was ${baseline})`);
 
   let current = emailsSentCount();
   const pollDeadlineMs = Date.now() + POLL_TIMEOUT_SECONDS * 1000;

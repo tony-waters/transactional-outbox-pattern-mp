@@ -250,8 +250,8 @@ across its 2 replicas: `outbox.event.order` has a single partition, so only one 
 the active Kafka consumer, and the other's counter stays at zero forever. Its Service uses
 `externalTrafficPolicy: Local` so a given node's NodePort only ever answers from that node's own
 pod (no cross-node load-balancing to mask this), rather than silently flip-flopping between a
-real count and a stuck zero. Find the active replica's node before polling the metric or running
-the k6 test below:
+real count and a stuck zero. Find the active replica's node before polling the metric directly
+(the k6 test below sidesteps this by summing across replicas via Prometheus instead):
 
 ```sh
 kubectl exec -n kafka outbox-dual-role-0 -c kafka -- \
@@ -262,14 +262,20 @@ kubectl get pods -n kafka -o wide -l app=email-service   # match the consumer's 
 ### 7. Run the existing k6 end-to-end test against Kind
 
 Point the same script from [`k6/`](k6/) at the NodePort addresses instead of compose's
-`localhost` ports — no changes to the script itself:
+`localhost` ports, including `PROMETHEUS_URL` so the verify stage sums `emails.sent` across both
+`email-service` replicas via PromQL rather than polling one pod's counter directly (see
+[`k6/README.md`](k6/README.md#configuration) for why that matters):
 
 ```sh
 k6 run \
   -e REST_SERVICE_URL=http://<any-node-ip>:30081 \
-  -e EMAIL_SERVICE_URL=http://<active-email-service-node-ip>:30082 \
+  -e EMAIL_SERVICE_URL=http://<any-node-ip>:30082 \
+  -e PROMETHEUS_URL=http://<any-node-ip>:30390 \
   k6/outbox-load-test.js
 ```
+
+`EMAIL_SERVICE_URL` doesn't need to be the active replica's node here — with `PROMETHEUS_URL`
+set, the script never polls it for the `emails.sent` count, so any node's IP works.
 
 A passing run means the same thing it does on compose: every order created, every confirmation
 eventually sent with no drops, and delivery visibly throttled.

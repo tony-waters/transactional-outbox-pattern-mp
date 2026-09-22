@@ -53,22 +53,38 @@ All parameters are overridable via environment variables (`k6 run -e NAME=value 
 | `POLL_INTERVAL_SECONDS` | `1` | How often to poll `emails.sent` in the verify stage |
 | `POLL_TIMEOUT_SECONDS` | `90` | Max time to wait for `emails.sent` to reach the target |
 | `MIN_DURATION_SAFETY_FACTOR` | `0.6` | Fraction of the theoretical minimum throttled duration required to pass — see comment in the script |
+| `PROMETHEUS_URL` | *(unset)* | If set, poll `emails.sent` by summing it across replicas via PromQL instead of hitting `EMAIL_SERVICE_URL` directly — see "Running against Kind" below |
 
 If the services aren't on `localhost:8081`/`8082` (e.g. a remote host), point at them with
 `REST_SERVICE_URL` / `EMAIL_SERVICE_URL`.
 
-**Running against Kind:** point both URLs at a node's IP and its NodePort (`30081`/`30082`), e.g.
+**Running against Kind:** on Kind, `email-service` runs 2 replicas behind a single-partition
+topic, so only one replica's JVM ever holds a non-zero `emails.sent` counter — polling
+`EMAIL_SERVICE_URL` directly (a load-balanced Service) has roughly even odds of landing on the
+idle replica for the whole test and failing even though the pipeline is healthy. Set
+`PROMETHEUS_URL` to the cluster's Prometheus (which scrapes both replicas, see
+`k8s/monitoring/01-prometheus.yaml`) so the script sums `emails.sent` across replicas via PromQL
+instead:
 
 ```sh
 NODE_IP=$(docker inspect outbox-worker2 --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
-k6 run -e REST_SERVICE_URL=http://$NODE_IP:30081 -e EMAIL_SERVICE_URL=http://$NODE_IP:30082 k6/outbox-load-test.js
+k6 run \
+  -e REST_SERVICE_URL=http://$NODE_IP:30081 \
+  -e EMAIL_SERVICE_URL=http://$NODE_IP:30082 \
+  -e PROMETHEUS_URL=http://$NODE_IP:30390 \
+  k6/outbox-load-test.js
 ```
 
-`email-service`'s Service uses `externalTrafficPolicy: Local`, so it only answers on a node that's
-actually running one of its pods — hitting a node without one doesn't fail fast, the connection
-just hangs until it times out. Check which nodes have a pod first (`kubectl get pods -n kafka -o
-wide -l app=email-service`) and use one of those nodes' IPs. `rest-service`'s Service uses the
-default `Cluster` policy, so any node's IP works for it regardless of where its pods land.
+`rest-service`'s Service uses the default `Cluster` policy, so any node's IP works for it
+regardless of where its pods land. With `PROMETHEUS_URL` set, `EMAIL_SERVICE_URL` is never
+polled for the `emails.sent` count (see `emailsSentCount()` in the script), so `NODE_IP` above
+only needs to resolve for `PROMETHEUS_URL` itself — any node's IP works for `EMAIL_SERVICE_URL`
+too.
+
+Without `PROMETHEUS_URL`, `EMAIL_SERVICE_URL` must point at a node that's actually running an
+`email-service` pod — its Service uses `externalTrafficPolicy: Local`, so a node without one
+doesn't fail fast, the connection just hangs until it times out. Check which nodes have a pod
+first (`kubectl get pods -n kafka -o wide -l app=email-service`) and use one of those nodes' IPs.
 
 ## Verifying the test actually exercises throttling
 
