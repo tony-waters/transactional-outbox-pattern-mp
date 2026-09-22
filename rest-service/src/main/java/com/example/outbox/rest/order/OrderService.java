@@ -47,14 +47,28 @@ public class OrderService {
     // Carries the current request's trace into the outbox row so it survives the CDC hop
     // (see ADR 0005) — delegates to the registered Propagator rather than hand-formatting a
     // W3C traceparent, so this keeps working if the propagation format ever changes.
+    //
+    // Injects a dedicated PRODUCER-kind span rather than the ambient HTTP SERVER span: Tempo's
+    // service-graph processor only draws an edge between two services when a CLIENT/PRODUCER
+    // span directly parents the far side's SERVER/CONSUMER span. email-service's Kafka listener
+    // span is CONSUMER, so without this, the parent would be the SERVER span, no pairing would
+    // match, and Grafana's service graph would show rest-service/email-service as disconnected
+    // rather than the real call.
     private String currentTraceParent() {
-        Span currentSpan = tracer.currentSpan();
-        if (currentSpan == null) {
+        if (tracer.currentSpan() == null) {
             return null;
         }
-        Map<String, String> carrier = new HashMap<>();
-        propagator.inject(currentSpan.context(), carrier, Map::put);
-        return carrier.get("traceparent");
+        Span producerSpan = tracer.spanBuilder()
+                .kind(Span.Kind.PRODUCER)
+                .name("outbox.event.order publish")
+                .start();
+        try {
+            Map<String, String> carrier = new HashMap<>();
+            propagator.inject(producerSpan.context(), carrier, Map::put);
+            return carrier.get("traceparent");
+        } finally {
+            producerSpan.end();
+        }
     }
 
     public Optional<Order> findOrder(UUID id) {

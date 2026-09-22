@@ -24,6 +24,13 @@ data:
         access: proxy
         uid: tempo
         url: http://tempo.monitoring.svc:3200
+        jsonData:
+          # Points the trace view's "Node Graph" tab at Prometheus, where Tempo's
+          # metrics-generator remote_writes the service-graph edges it derives from spans.
+          serviceMap:
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
 ---
 apiVersion: v1
 kind: ConfigMap

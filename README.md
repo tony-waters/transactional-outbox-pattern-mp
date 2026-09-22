@@ -277,9 +277,29 @@ trace across the CDC hop by routing the `outbox.trace_context` column onto the K
 To view a trace: place an order, then open Grafana ([`http://$NODE_IP:30300`](#9-metrics-prometheus--grafana)),
 go to **Explore**, pick the **Tempo** datasource, and search by service name (`rest-service` or
 `email-service`) or by trace ID (logged by both services alongside every span). A single trace
-shows the `POST /orders` request span in `rest-service`, then a `receive` span in `email-service`
-for the same trace ID — proof the CDC hop didn't break trace continuity, even though Debezium
-itself never touched an OpenTelemetry SDK.
+shows the `POST /orders` request span in `rest-service`, an `outbox.event.order publish`
+`PRODUCER` span (also in `rest-service` — see below), then an `outbox.event.order receive`
+`CONSUMER` span in `email-service` for the same trace ID — proof the CDC hop didn't break trace
+continuity, even though Debezium itself never touched an OpenTelemetry SDK.
+
+**Service graph.** Tempo's `metrics_generator` (`k8s/monitoring/03-tempo.yaml`) derives
+service-graph edges from that `PRODUCER`/`CONSUMER` span pair and `remote_write`s them into
+Prometheus (`enableRemoteWriteReceiver: true` on the `Prometheus` CR,
+`k8s/monitoring/01-prometheus.yaml`), which is what the Tempo datasource's
+`serviceMap.datasourceUid` points at. Two places show it:
+
+- Open any trace as above — the **Node graph** tab underneath it renders that trace's own
+  caller/callee edges.
+- **Explore → Tempo → Service Graph** tab renders the aggregate graph across all traces in the
+  selected time range: `rest-service → email-service`, labeled `messaging_system`.
+
+`rest-service` deliberately starts an explicit `PRODUCER`-kind span around the outbox write
+(`OrderService.currentTraceParent()`) rather than injecting the ambient HTTP request span's
+context: Tempo's service-graph processor only links two services when a `CLIENT`/`PRODUCER` span
+directly parents the far side's `SERVER`/`CONSUMER` span, and `email-service`'s Kafka listener
+span is `CONSUMER`. Without the dedicated producer span, the parent would be the plain `SERVER`
+span for `POST /orders`, no pairing would match, and the graph would show `rest-service` and
+`email-service` as two disconnected nodes instead of a connected edge.
 
 ### Cleanup
 

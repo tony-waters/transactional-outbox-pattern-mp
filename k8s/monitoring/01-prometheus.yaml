@@ -60,6 +60,9 @@ spec:
   podMonitorNamespaceSelector: {}
   serviceMonitorSelector: {}
   serviceMonitorNamespaceSelector: {}
+  # Lets Tempo's metrics-generator remote_write service-graph/span-metrics samples in
+  # (see k8s/monitoring/03-tempo.yaml) instead of Prometheus only ever scraping outward.
+  enableRemoteWriteReceiver: true
   resources:
     requests:
       memory: 400Mi
