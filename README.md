@@ -232,14 +232,14 @@ curl -i -X POST http://$NODE_IP:30081/orders \
   -d '{"customerEmail": "you@example.com", "amount": 19.99}'
 ```
 
-| Service | NodePort |
-| --- | --- |
-| `rest-service` | `30081` |
-| `email-service` | `30082` |
-| `kafka-ui` | `30080` |
-| `postgres` | `30432` |
-| `grafana` | `30300` |
-| `prometheus` | `30390` |
+| Service | NodePort | URL |
+| --- | --- | --- |
+| `rest-service` | `30081` | `http://$NODE_IP:30081` |
+| `email-service` | `30082` | `http://$NODE_IP:30082` |
+| `kafka-ui` | `30080` | `http://$NODE_IP:30080` |
+| `postgres` | `30432` | `$NODE_IP:30432` (not HTTP — connect with `psql`/a Postgres client) |
+| `grafana` | `30300` | `http://$NODE_IP:30300` |
+| `prometheus` | `30390` | `http://$NODE_IP:30390` |
 
 Any node's IP (`docker inspect outbox-<control-plane\|worker\|worker2\|worker3> --format
 '{{.NetworkSettings.Networks.kind.IPAddress}}'`, or `kubectl get nodes -o wide`) answers every
