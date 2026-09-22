@@ -27,81 +27,22 @@ delayed under load.
 See [`CONTEXT.md`](CONTEXT.md) for the domain vocabulary and [`docs/adr/`](docs/adr/) for the
 architectural decisions behind this design.
 
-## Services
+## Architecture
 
-| Service | Port | Role |
-| --- | --- | --- |
-| `rest-service` | `8081` | Spring Boot REST API — writes `Order` + `Outbox` rows transactionally |
-| `email-service` | `8082` | Spring Boot Kafka consumer — rate-limited "send confirmation" |
-| `postgres` | `5432` | Holds `orders` and `outbox` tables (`wal_level=logical` for CDC) |
-| `connect` | `8083` | Kafka Connect running the Debezium Postgres connector |
-| `kafka` | `9092` | Single-node KRaft broker |
-| `kafka-ui` | `8080` | Visual inspection of topics and the Connect connector |
-
-## Quick start
-
-```sh
-docker compose up --build
-```
-
-This builds and starts every service, including a one-shot container that registers the
-Debezium connector against Connect's REST API once it's healthy — no manual setup step.
-
-Once everything is up, place an order:
-
-```sh
-curl -i -X POST http://localhost:8081/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"customerEmail": "customer@example.com", "amount": 19.99}'
-```
-
-You'll get back a `201` with the created order. Fetch it back:
-
-```sh
-curl -i http://localhost:8081/orders/<id>
-```
-
-Within a couple of seconds, `email-service`'s logs will show a line for the confirmation email,
-and its sent-count will have incremented:
-
-```sh
-curl -s http://localhost:8082/actuator/metrics/emails.sent
-```
-
-Post orders faster than 5 per 10 seconds and you'll see `emails.sent` climb at a visibly
-throttled pace instead of keeping up — the rate limiter working as intended, with growing
-consumer lag rather than dropped messages.
-
-## Watching it work
-
-- **Kafka UI** ([localhost:8080](http://localhost:8080)) — inspect the `outbox.event.order`
-  topic and the Debezium connector's state.
-- **Outbox table**: `docker exec -it $(docker compose ps -q postgres) psql -U postgres -d outbox -c 'select * from outbox;'`
-- **Service logs**: `docker compose logs -f email-service` to watch confirmations (and
-  throttling) happen in real time.
-
-## End-to-end test
-
-[`k6/`](k6/) contains a k6 script that drives the whole stack through its public HTTP surface
-and asserts the pattern — including the rate limiter's throttling — actually works. It's run
-manually against an already-running stack, not as part of `docker-compose`. See
-[`k6/README.md`](k6/README.md).
-
-## Running on Kind (production-like HA topology)
-
-Docker Compose above is the default, single-instance quick-start. This repo also runs on a
-local Kind cluster with a production-like, highly-available topology: a Strimzi-managed
-3-broker Kafka cluster (replication factor 3), 2 replicas each of `rest-service` and
-`email-service` spread across nodes with anti-affinity and `PodDisruptionBudget`s, a
-single-instance Postgres `StatefulSet`, and Debezium running via Strimzi's
-`KafkaConnect`/`KafkaConnector` custom resources instead of compose's one-shot
-`connector-registrar` job. See [ADR 0003](docs/adr/0003-strimzi-for-kafka-on-kind.md) and
+The whole stack runs on a local [Kind](https://kind.sigs.k8s.io/) cluster with a
+production-like, highly-available topology: a Strimzi-managed 3-broker Kafka cluster
+(replication factor 3), 2 replicas each of `rest-service` and `email-service` spread across
+nodes with anti-affinity and `PodDisruptionBudget`s, a single-instance Postgres `StatefulSet`,
+and Debezium running via Strimzi's `KafkaConnect`/`KafkaConnector` custom resources. See
+[ADR 0003](docs/adr/0003-strimzi-for-kafka-on-kind.md) and
 [ADR 0004](docs/adr/0004-ha-topology-before-resilience-tests.md) for why it's shaped this way,
 and [`k8s/`](k8s/) for the manifests.
 
-Prerequisites: [`kind`](https://kind.sigs.k8s.io/), `kubectl`, `docker`.
+## Prerequisites
 
-### Quick start
+[`kind`](https://kind.sigs.k8s.io/), `kubectl`, `docker`.
+
+## Quick start
 
 ```sh
 ./up.sh
@@ -143,8 +84,7 @@ Kind nodes run their own containerd — images built or pulled on the host aren'
 until you load them in. Besides `rest-service`/`email-service`, this also builds a custom Kafka
 Connect image: Strimzi's stock Connect image ships with no connector plugins, so
 [`connect/Dockerfile.strimzi`](connect/Dockerfile.strimzi) adds the Debezium Postgres connector
-(copied out of the `debezium/connect` image compose already uses) on top of Strimzi's own Kafka
-image.
+(copied out of the `debezium/connect` image) on top of Strimzi's own Kafka image.
 
 ```sh
 docker build --network host -t local/rest-service:latest ./rest-service
@@ -192,7 +132,7 @@ kind load docker-image --name outbox \
 
 ### 4. Install the Prometheus Operator
 
-Prometheus/Grafana ([step 8](#8-metrics-prometheus--grafana)) are managed via the `Prometheus`/
+Prometheus/Grafana ([step 9](#9-metrics-prometheus--grafana)) are managed via the `Prometheus`/
 `PodMonitor` custom resources, which need the Prometheus Operator's CRDs and controller
 installed first — same "curl a manifest, apply it" pattern as the Strimzi operator above.
 `--server-side` is required: the bundle's CRDs exceed `kubectl apply`'s client-side annotation
@@ -232,6 +172,12 @@ curl -i -X POST http://$NODE_IP:30081/orders \
   -d '{"customerEmail": "you@example.com", "amount": 19.99}'
 ```
 
+You'll get back a `201` with the created order. Fetch it back:
+
+```sh
+curl -i http://$NODE_IP:30081/orders/<id>
+```
+
 | Service | NodePort | URL |
 | --- | --- | --- |
 | `rest-service` | `30081` | `http://$NODE_IP:30081` |
@@ -259,28 +205,44 @@ kubectl exec -n kafka outbox-dual-role-0 -c kafka -- \
 kubectl get pods -n kafka -o wide -l app=email-service   # match the consumer's HOST (pod IP) to a node
 ```
 
-### 7. Run the existing k6 end-to-end test against Kind
+### 7. Watching it work
 
-Point the same script from [`k6/`](k6/) at the NodePort addresses instead of compose's
-`localhost` ports, including `PROMETHEUS_URL` so the verify stage sums `emails.sent` across both
-`email-service` replicas via PromQL rather than polling one pod's counter directly (see
-[`k6/README.md`](k6/README.md#configuration) for why that matters):
+- **Kafka UI** (`http://$NODE_IP:30080`) — inspect the `outbox.event.order` topic and the
+  Debezium connector's state.
+- **Outbox table**:
+  ```sh
+  kubectl exec -n kafka postgres-0 -- psql -U postgres -d outbox -c 'select * from outbox;'
+  ```
+- **Service logs**:
+  ```sh
+  kubectl logs -n kafka -l app=email-service -f --prefix
+  ```
+  to watch confirmations (and throttling) happen in real time across both replicas.
+
+Post orders faster than 5 per 10 seconds and you'll see `emails.sent` climb at a visibly
+throttled pace instead of keeping up — the rate limiter working as intended, with growing
+consumer lag rather than dropped messages.
+
+### 8. Run the k6 end-to-end test
+
+[`k6/`](k6/) contains a k6 script that drives the whole stack through its public HTTP surface
+and asserts the pattern — including the rate limiter's throttling — actually works. Point it at
+the NodePort addresses, including `PROMETHEUS_URL` so the verify stage sums `emails.sent` across
+both `email-service` replicas via PromQL rather than polling one pod's counter directly (see
+[`k6/README.md`](k6/README.md) for why that matters):
 
 ```sh
 k6 run \
-  -e REST_SERVICE_URL=http://<any-node-ip>:30081 \
-  -e EMAIL_SERVICE_URL=http://<any-node-ip>:30082 \
-  -e PROMETHEUS_URL=http://<any-node-ip>:30390 \
+  -e REST_SERVICE_URL=http://$NODE_IP:30081 \
+  -e EMAIL_SERVICE_URL=http://$NODE_IP:30082 \
+  -e PROMETHEUS_URL=http://$NODE_IP:30390 \
   k6/outbox-load-test.js
 ```
 
-`EMAIL_SERVICE_URL` doesn't need to be the active replica's node here — with `PROMETHEUS_URL`
-set, the script never polls it for the `emails.sent` count, so any node's IP works.
+A passing run means: every order was created, every order's confirmation email was eventually
+sent (no drops), and delivery was actually throttled rather than instantaneous.
 
-A passing run means the same thing it does on compose: every order created, every confirmation
-eventually sent with no drops, and delivery visibly throttled.
-
-### 8. Metrics: Prometheus + Grafana
+### 9. Metrics: Prometheus + Grafana
 
 [`k8s/monitoring/`](k8s/monitoring/) adds a Prometheus + Grafana stack, in its own `monitoring`
 namespace, that makes the HA topology's actual behavior visible instead of just "up/down": Kafka
@@ -288,9 +250,9 @@ broker/Connect/consumer-lag metrics via Strimzi's built-in `strimziMetricsReport
 `kafkaExporter` (see `k8s/02-kafka.yaml`, `k8s/03-kafka-connect.yaml`), and `rest-service`/
 `email-service` metrics via Micrometer's `/actuator/prometheus`.
 
-Open Grafana at `http://<any-node-ip>:30300` — no login required (anonymous Admin access, this
-being a prototype with no auth anywhere else either). A dashboard called **Outbox Pattern in
-Action** is auto-provisioned on first boot, with three panels:
+Open Grafana at `http://$NODE_IP:30300` — no login required (anonymous Admin access, this being
+a prototype with no auth anywhere else either). A dashboard called **Outbox Pattern in Action**
+is auto-provisioned on first boot, with three panels:
 
 - **Orders created vs. confirmation emails sent** — the rate limiter's throttling curve: place
   orders faster than 5/10s (e.g. via the k6 script above) and watch the two lines diverge.
@@ -299,9 +261,9 @@ Action** is auto-provisioned on first boot, with three panels:
 - **Kafka partition leadership by broker** — which of the 3 brokers is leading which partitions.
 
 Prometheus's own UI (targets/graph pages, useful for checking scrape health directly) is at
-`http://<any-node-ip>:30390`.
+`http://$NODE_IP:30390`.
 
-### 9. Distributed tracing: Tempo
+### 10. Distributed tracing: Tempo
 
 [`k8s/monitoring/03-tempo.yaml`](k8s/monitoring/03-tempo.yaml) adds Grafana Tempo (single-binary,
 local disk storage) to the `monitoring` namespace as the trace backend for the one hop metrics
@@ -312,7 +274,7 @@ trace across the CDC hop by routing the `outbox.trace_context` column onto the K
 `traceparent` header — no custom SMT, no log-correlation hack (see
 [ADR 0005](docs/adr/0005-trace-context-through-outbox.md)).
 
-To view a trace: place an order, then open Grafana ([`http://<any-node-ip>:30300`](#8-metrics-prometheus--grafana)),
+To view a trace: place an order, then open Grafana ([`http://$NODE_IP:30300`](#9-metrics-prometheus--grafana)),
 go to **Explore**, pick the **Tempo** datasource, and search by service name (`rest-service` or
 `email-service`) or by trace ID (logged by both services alongside every span). A single trace
 shows the `POST /orders` request span in `rest-service`, then a `receive` span in `email-service`
@@ -325,7 +287,8 @@ itself never touched an OpenTelemetry SDK.
 ./down.sh
 ```
 
-Equivalent to `kind delete cluster --name outbox` directly.
+Equivalent to `kind delete cluster --name outbox` directly — wipes the whole cluster, Postgres
+data included.
 
 ## Notes
 

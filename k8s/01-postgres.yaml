@@ -60,7 +60,7 @@ spec:
         - name: postgres
           image: postgres:16
           imagePullPolicy: IfNotPresent
-          # wal_level=logical is required for Debezium's pgoutput plugin (matches docker-compose, see #4).
+          # wal_level=logical is required for Debezium's pgoutput plugin (see #4).
           args:
             - "-c"
             - "wal_level=logical"
