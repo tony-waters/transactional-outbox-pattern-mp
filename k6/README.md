@@ -57,6 +57,19 @@ All parameters are overridable via environment variables (`k6 run -e NAME=value 
 If the services aren't on `localhost:8081`/`8082` (e.g. a remote host), point at them with
 `REST_SERVICE_URL` / `EMAIL_SERVICE_URL`.
 
+**Running against Kind:** point both URLs at a node's IP and its NodePort (`30081`/`30082`), e.g.
+
+```sh
+NODE_IP=$(docker inspect outbox-worker2 --format '{{.NetworkSettings.Networks.kind.IPAddress}}')
+k6 run -e REST_SERVICE_URL=http://$NODE_IP:30081 -e EMAIL_SERVICE_URL=http://$NODE_IP:30082 k6/outbox-load-test.js
+```
+
+`email-service`'s Service uses `externalTrafficPolicy: Local`, so it only answers on a node that's
+actually running one of its pods — hitting a node without one doesn't fail fast, the connection
+just hangs until it times out. Check which nodes have a pod first (`kubectl get pods -n kafka -o
+wide -l app=email-service`) and use one of those nodes' IPs. `rest-service`'s Service uses the
+default `Cluster` policy, so any node's IP works for it regardless of where its pods land.
+
 ## Verifying the test actually exercises throttling
 
 To confirm the timing assertion is meaningful rather than a tautology, temporarily raise
