@@ -33,3 +33,15 @@ management:
   otlp:
     tracing:
       endpoint: http://localhost:4318/v1/traces
+
+resilience4j:
+  ratelimiter:
+    instances:
+      emailSender:
+        limit-for-period: 5
+        limit-refresh-period: 10s
+        # resilience4j has no literal "block forever" option, so a very long timeout
+        # stands in for it — the consumer thread blocks until a permit frees up,
+        # rather than rejecting/retrying/dead-lettering on rate-limit breach (ADR 0002).
+        timeout-duration: 365d
+        register-health-indicator: true
