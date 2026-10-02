@@ -128,6 +128,36 @@
 
   figcaption strong{ color: var(--ink); font-weight: 600; }
 
+  .legend{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    padding: 14px 6px 2px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  .legend-item{
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ink-soft);
+  }
+
+  .legend-item .swatch{
+    display: inline-block;
+    width: 22px;
+    height: 0;
+    border-top-width: 2px;
+  }
+
+  .swatch.sync{ border-top-style: solid; border-top-color: var(--sync); }
+  .swatch.async{ border-top-style: solid; border-top-color: var(--async); }
+  .swatch.cdc{ border-top-style: dashed; border-top-color: var(--ink-soft); }
+  .swatch.inspect{ border-top-style: solid; border-top-color: var(--ink-soft); }
+  .swatch.metrics{ border-top-style: dashed; border-top-color: var(--signal); }
+  .swatch.traces{ border-top-style: dotted; border-top-color: var(--signal); }
+
   .cards{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -352,6 +382,14 @@
         <text x="733" y="606" text-anchor="middle" class="sub" fill="var(--ink-soft)">· service graph</text>
 
       </svg>
+    </div>
+    <div class="legend">
+      <span class="legend-item"><i class="swatch sync"></i>Same transaction</span>
+      <span class="legend-item"><i class="swatch cdc"></i>CDC — tails WAL, no app code</span>
+      <span class="legend-item"><i class="swatch async"></i>Kafka produce / consume</span>
+      <span class="legend-item"><i class="swatch inspect"></i>Direct inspection</span>
+      <span class="legend-item"><i class="swatch metrics"></i>Metrics (Prometheus)</span>
+      <span class="legend-item"><i class="swatch traces"></i>Traces (Tempo)</span>
     </div>
     <figcaption>
       An order becomes an email: <strong>rest-service</strong> and <strong>Postgres</strong>
