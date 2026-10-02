@@ -1,0 +1,387 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Outbox Relay (Copy)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --paper: #f1f3f6;
+    --paper-raised: #ffffff;
+    --ink: #1a2230;
+    --ink-soft: #57636f;
+    --line: #ccd2db;
+    --sync: #2f5fd6;
+    --sync-soft: #e4ebfb;
+    --async: #b9660f;
+    --async-soft: #f7e7d2;
+    --signal: #127a63;
+    --signal-soft: #dff3ee;
+
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+    --font-sans: 'IBM Plex Sans', -apple-system, 'Segoe UI', Helvetica, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper: #12151b;
+      --paper-raised: #1b2029;
+      --ink: #e7eaf0;
+      --ink-soft: #9aa5b4;
+      --line: #343c4a;
+      --sync: #84a6ff;
+      --sync-soft: #1d2b4d;
+      --async: #e9a357;
+      --async-soft: #3a2a14;
+      --signal: #4fd3ac;
+      --signal-soft: #103028;
+    }
+  }
+
+  :root[data-theme="dark"]{
+    --paper: #12151b;
+    --paper-raised: #1b2029;
+    --ink: #e7eaf0;
+    --ink-soft: #9aa5b4;
+    --line: #343c4a;
+    --sync: #84a6ff;
+    --sync-soft: #1d2b4d;
+    --async: #e9a357;
+    --async-soft: #3a2a14;
+    --signal: #4fd3ac;
+    --signal-soft: #103028;
+  }
+
+  *{ box-sizing: border-box; }
+
+  body{
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 48px 32px 72px;
+  }
+
+  main{
+    max-width: 1180px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .eyebrow{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  h1{
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: clamp(28px, 4vw, 38px);
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .subtitle{
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  figure{
+    margin: 0;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px 20px 8px;
+  }
+
+  .diagram-scroll{
+    overflow-x: auto;
+  }
+
+  svg{
+    display: block;
+    width: 100%;
+    height: auto;
+    min-width: 820px;
+    font-family: var(--font-mono);
+  }
+
+  figcaption{
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    padding: 16px 6px 10px;
+    border-top: 1px solid var(--line);
+    margin-top: 14px;
+  }
+
+  figcaption strong{ color: var(--ink); font-weight: 600; }
+
+  .cards{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+
+  .card{
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--card-accent, var(--line));
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .card h2{
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .card p{
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .card code{
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    color: var(--ink);
+  }
+
+  .card.c-sync{ --card-accent: var(--sync); }
+  .card.c-neutral{ --card-accent: var(--ink-soft); }
+  .card.c-async{ --card-accent: var(--async); }
+  .card.c-signal{ --card-accent: var(--signal); }
+
+  @media (max-width: 860px){
+    .cards{ grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 560px){
+    .cards{ grid-template-columns: 1fr; }
+    body{ padding: 32px 16px 56px; }
+  }
+
+  @media (prefers-reduced-motion: no-preference){
+    figure{ transition: border-color 0.2s ease; }
+  }
+</style>
+
+<main>
+  <header style="display:flex; flex-direction:column; gap:10px;">
+    <p class="eyebrow">Architecture</p>
+    <h1>Outbox Relay</h1>
+    <p class="subtitle">
+      How placing an order becomes a confirmation email — across one Postgres transaction,
+      a Debezium CDC hop, a Kafka topic, and two independently-scaled services.
+    </p>
+  </header>
+
+  <figure>
+    <div class="diagram-scroll">
+      <svg viewBox="0 0 1260 680" role="img" aria-label="An HTTP client posts an order to rest-service, which writes the order and an outbox row to Postgres in a single transaction. Kafka Connect's Debezium connector tails Postgres's write-ahead log and routes the outbox row onto a Kafka topic. email-service consumes that topic through a blocking rate limiter and sends a confirmation email. Below, an observability plane shows Prometheus and Tempo collecting metrics and traces from rest-service and email-service, Grafana querying both, and Kafka UI inspecting the topic directly.">
+
+        <defs>
+          <marker id="arrowInk" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" class="m-ink" />
+          </marker>
+          <marker id="arrowSync" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" class="m-sync" />
+          </marker>
+          <marker id="arrowAsync" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" class="m-async" />
+          </marker>
+          <marker id="arrowSignal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" class="m-signal" />
+          </marker>
+          <style>
+            .m-ink{ fill: var(--ink-soft); }
+            .m-sync{ fill: var(--sync); }
+            .m-async{ fill: var(--async); }
+            .m-signal{ fill: var(--signal); }
+            .lbl{ font-size: 10.5px; }
+            .ttl{ font-size: 13.5px; font-weight: 600; }
+            .sub{ font-size: 9.5px; font-family: var(--font-sans); }
+          </style>
+        </defs>
+
+        <!-- ===== client request ===== -->
+        <text x="115" y="30" text-anchor="middle" class="lbl" fill="var(--ink-soft)" letter-spacing="0.08em">HTTP CLIENT</text>
+        <line x1="115" y1="45" x2="115" y2="131" stroke="var(--ink-soft)" stroke-width="1.5" marker-end="url(#arrowInk)" />
+        <text x="124" y="92" class="lbl" fill="var(--ink-soft)">POST /orders</text>
+
+        <!-- ===== main row boxes ===== -->
+        <!-- rest-service -->
+        <rect x="30" y="135" width="170" height="150" rx="9" fill="var(--sync-soft)" stroke="var(--sync)" stroke-width="1.5" />
+        <text x="115" y="166" text-anchor="middle" class="ttl" fill="var(--ink)">rest-service</text>
+        <text x="115" y="184" text-anchor="middle" class="sub" fill="var(--ink-soft)">2 replicas · @Transactional</text>
+
+        <!-- Postgres -->
+        <rect x="236" y="135" width="170" height="150" rx="9" fill="var(--sync-soft)" stroke="var(--sync)" stroke-width="1.5" />
+        <text x="321" y="161" text-anchor="middle" class="ttl" fill="var(--ink)">Postgres</text>
+        <text x="321" y="177" text-anchor="middle" class="sub" fill="var(--ink-soft)">StatefulSet</text>
+        <text x="254" y="188" class="sub" fill="var(--ink-soft)" letter-spacing="0.08em">SAME TX</text>
+        <rect x="250" y="192" width="142" height="80" rx="6" fill="none" stroke="var(--sync)" stroke-width="1.25" stroke-dasharray="4 3" />
+        <rect x="258" y="200" width="126" height="28" rx="4" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <text x="321" y="218" text-anchor="middle" class="lbl" fill="var(--ink)">orders</text>
+        <rect x="258" y="238" width="126" height="28" rx="4" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <text x="321" y="256" text-anchor="middle" class="lbl" fill="var(--ink)">outbox</text>
+
+        <!-- Kafka Connect -->
+        <rect x="442" y="135" width="170" height="150" rx="9" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.5" />
+        <text x="527" y="161" text-anchor="middle" class="ttl" fill="var(--ink)">Kafka Connect</text>
+        <text x="527" y="179" text-anchor="middle" class="sub" fill="var(--ink-soft)">Debezium Postgres connector</text>
+        <text x="527" y="193" text-anchor="middle" class="sub" fill="var(--ink-soft)">+ Outbox Event Router SMT</text>
+
+        <!-- Kafka (topic) -->
+        <rect x="648" y="135" width="170" height="150" rx="9" fill="var(--async-soft)" stroke="var(--async)" stroke-width="1.5" />
+        <text x="733" y="161" text-anchor="middle" class="ttl" fill="var(--ink)">Kafka</text>
+        <text x="733" y="179" text-anchor="middle" class="sub" fill="var(--ink-soft)">outbox.event.order</text>
+        <text x="733" y="195" text-anchor="middle" class="sub" fill="var(--ink-soft)">1 partition · RF 3 · 3 brokers</text>
+        <rect x="678" y="214" width="110" height="10" rx="2" fill="var(--async-soft)" stroke="var(--async)" stroke-width="1" />
+        <rect x="678" y="232" width="110" height="10" rx="2" fill="var(--async-soft)" stroke="var(--async)" stroke-width="1" />
+        <rect x="678" y="250" width="110" height="10" rx="2" fill="var(--async-soft)" stroke="var(--async)" stroke-width="1" />
+
+        <!-- email-service -->
+        <rect x="854" y="135" width="170" height="150" rx="9" fill="var(--async-soft)" stroke="var(--async)" stroke-width="1.5" />
+        <text x="939" y="161" text-anchor="middle" class="ttl" fill="var(--ink)">email-service</text>
+        <text x="939" y="179" text-anchor="middle" class="sub" fill="var(--ink-soft)">2 replicas · 1 active consumer</text>
+        <rect x="879" y="196" width="120" height="26" rx="13" fill="var(--paper-raised)" stroke="var(--async)" stroke-width="1.25" />
+        <text x="939" y="213" text-anchor="middle" class="lbl" fill="var(--ink)">5 req / 10s</text>
+        <text x="939" y="236" text-anchor="middle" class="sub" fill="var(--ink-soft)">blocks, never drops</text>
+
+        <!-- confirmation email terminus -->
+        <rect x="1060" y="135" width="170" height="150" rx="9" fill="var(--paper)" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="5 4" />
+        <rect x="1115" y="156" width="60" height="36" rx="3" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <polyline points="1115,156 1145,179 1175,156" fill="none" stroke="var(--line)" stroke-width="1.25" />
+        <text x="1145" y="212" text-anchor="middle" class="lbl" fill="var(--ink)">confirmation email</text>
+        <text x="1145" y="228" text-anchor="middle" class="sub" fill="var(--ink-soft)">to customer</text>
+
+        <!-- ===== main row arrows + labels ===== -->
+        <text x="218" y="122" text-anchor="middle" class="lbl" fill="var(--sync)">writes order + outbox</text>
+        <line x1="203" y1="210" x2="233" y2="210" stroke="var(--sync)" stroke-width="1.5" marker-end="url(#arrowSync)" />
+
+        <text x="424" y="122" text-anchor="middle" class="lbl" fill="var(--ink-soft)">tails WAL (CDC)</text>
+        <line x1="409" y1="210" x2="439" y2="210" stroke="var(--ink-soft)" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrowInk)" />
+
+        <text x="630" y="122" text-anchor="middle" class="lbl" fill="var(--async)">routes via SMT</text>
+        <line x1="615" y1="210" x2="645" y2="210" stroke="var(--async)" stroke-width="1.5" marker-end="url(#arrowAsync)" />
+
+        <text x="836" y="122" text-anchor="middle" class="lbl" fill="var(--async)">consumes</text>
+        <line x1="821" y1="210" x2="851" y2="210" stroke="var(--async)" stroke-width="1.5" marker-end="url(#arrowAsync)" />
+
+        <text x="1042" y="122" text-anchor="middle" class="lbl" fill="var(--async)">sends (rate-limited)</text>
+        <line x1="1027" y1="210" x2="1057" y2="210" stroke="var(--async)" stroke-width="1.5" marker-end="url(#arrowAsync)" />
+
+        <!-- ===== CDC hop annotation ===== -->
+        <path d="M236,294 L236,300 L818,300 L818,294" fill="none" stroke="var(--ink-soft)" stroke-width="1.25" />
+        <text x="527" y="316" text-anchor="middle" class="lbl" fill="var(--ink-soft)">CDC hop — Debezium tails the WAL; no application code runs here</text>
+        <text x="527" y="334" text-anchor="middle" class="lbl" fill="var(--signal)">trace context still crosses — outbox.trace_context column → traceparent header</text>
+
+        <!-- ===== metrics / trace buses ===== -->
+        <line x1="115" y1="285" x2="115" y2="352" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" />
+        <line x1="939" y1="285" x2="939" y2="352" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" />
+        <line x1="115" y1="352" x2="939" y2="352" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" />
+        <line x1="420" y1="352" x2="420" y2="410" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" marker-end="url(#arrowSignal)" />
+        <text x="160" y="346" class="lbl" fill="var(--signal)">metrics</text>
+
+        <line x1="125" y1="285" x2="125" y2="370" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="2 3" />
+        <line x1="949" y1="285" x2="949" y2="370" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="2 3" />
+        <line x1="125" y1="370" x2="1046" y2="370" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="2 3" />
+        <line x1="1046" y1="370" x2="1046" y2="410" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="2 3" marker-end="url(#arrowSignal)" />
+        <text x="160" y="364" class="lbl" fill="var(--signal)">traces</text>
+
+        <line x1="733" y1="285" x2="733" y2="410" stroke="var(--ink-soft)" stroke-width="1.25" marker-end="url(#arrowInk)" />
+        <text x="745" y="340" class="lbl" fill="var(--ink-soft)">inspect</text>
+
+        <!-- ===== section divider ===== -->
+        <text x="30" y="382" class="lbl" fill="var(--signal)" letter-spacing="0.12em">OBSERVABILITY PLANE</text>
+        <line x1="30" y1="390" x2="1230" y2="390" stroke="var(--line)" stroke-width="1" />
+
+        <!-- ===== observability row ===== -->
+        <!-- Prometheus -->
+        <rect x="335" y="410" width="170" height="70" rx="8" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <rect x="335" y="410" width="170" height="4" fill="var(--signal)" />
+        <text x="420" y="438" text-anchor="middle" class="ttl" fill="var(--ink)" font-size="12.5">Prometheus</text>
+        <text x="420" y="454" text-anchor="middle" class="sub" fill="var(--ink-soft)">scrapes /actuator/prometheus</text>
+        <text x="420" y="466" text-anchor="middle" class="sub" fill="var(--ink-soft)">+ broker/connector metrics</text>
+
+        <!-- Kafka UI -->
+        <rect x="648" y="410" width="170" height="70" rx="8" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <rect x="648" y="410" width="170" height="4" fill="var(--ink-soft)" />
+        <text x="733" y="438" text-anchor="middle" class="ttl" fill="var(--ink)" font-size="12.5">Kafka UI</text>
+        <text x="733" y="454" text-anchor="middle" class="sub" fill="var(--ink-soft)">inspect topic &amp;</text>
+        <text x="733" y="466" text-anchor="middle" class="sub" fill="var(--ink-soft)">connector state</text>
+
+        <!-- Tempo -->
+        <rect x="961" y="410" width="170" height="70" rx="8" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <rect x="961" y="410" width="170" height="4" fill="var(--signal)" />
+        <text x="1046" y="438" text-anchor="middle" class="ttl" fill="var(--ink)" font-size="12.5">Tempo</text>
+        <text x="1046" y="454" text-anchor="middle" class="sub" fill="var(--ink-soft)">OTLP traces from</text>
+        <text x="1046" y="466" text-anchor="middle" class="sub" fill="var(--ink-soft)">both services</text>
+
+        <!-- row1 -> Grafana -->
+        <line x1="420" y1="480" x2="690" y2="548" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" marker-end="url(#arrowSignal)" />
+        <text x="540" y="518" text-anchor="middle" class="lbl" fill="var(--signal)">PromQL</text>
+
+        <line x1="1046" y1="480" x2="778" y2="548" stroke="var(--signal)" stroke-width="1.25" stroke-dasharray="4 3" marker-end="url(#arrowSignal)" />
+        <text x="928" y="518" text-anchor="middle" class="lbl" fill="var(--signal)">traces</text>
+
+        <!-- Grafana -->
+        <rect x="633" y="550" width="200" height="70" rx="8" fill="var(--paper-raised)" stroke="var(--line)" stroke-width="1.25" />
+        <rect x="633" y="550" width="200" height="4" fill="var(--signal)" />
+        <text x="733" y="578" text-anchor="middle" class="ttl" fill="var(--ink)">Grafana</text>
+        <text x="733" y="594" text-anchor="middle" class="sub" fill="var(--ink-soft)">dashboards · trace explore</text>
+        <text x="733" y="606" text-anchor="middle" class="sub" fill="var(--ink-soft)">· service graph</text>
+
+      </svg>
+    </div>
+    <figcaption>
+      An order becomes an email: <strong>rest-service</strong> and <strong>Postgres</strong>
+      share one transaction, so the order row and its outbox row either both land or neither
+      does. <strong>Kafka Connect</strong>'s Debezium relay turns the outbox row into a Kafka
+      message — no application code ever calls Kafka directly. <strong>email-service</strong>
+      consumes it behind a blocking rate limiter, so a burst of orders shows up as growing
+      consumer lag, not lost mail. Below the line, <strong>Prometheus</strong>, <strong>Tempo</strong>,
+      <strong>Grafana</strong>, and <strong>Kafka UI</strong> watch every hop without sitting in its path.
+    </figcaption>
+  </figure>
+
+  <div class="cards">
+    <div class="card c-sync">
+      <h2>One transaction</h2>
+      <p><code>rest-service</code> writes the <code>orders</code> row and the <code>outbox</code> row in a single <code>@Transactional</code> call — never two systems to keep in sync.</p>
+    </div>
+    <div class="card c-neutral">
+      <h2>CDC, not dual writes</h2>
+      <p>Debezium tails Postgres's write-ahead log and republishes the outbox row — the only way an order ever reaches Kafka.</p>
+    </div>
+    <div class="card c-async">
+      <h2>Blocks, never drops</h2>
+      <p>The rate limiter (5 req/10s) blocks the consumer thread instead of rejecting. Lag grows under load; nothing is lost.</p>
+    </div>
+    <div class="card c-signal">
+      <h2>Trace survives the hop</h2>
+      <p>The outbox row's <code>trace_context</code> column becomes a Kafka <code>traceparent</code> header, so one trace spans both services.</p>
+    </div>
+  </div>
+</main>
+
+</body></html>
